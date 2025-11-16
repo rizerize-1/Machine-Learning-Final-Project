@@ -1,2 +1,2 @@
-# Machine-Learning-Final-Project
-ML 1 Project about Temperature Forecasting
+# ML-Final-Project-Group7-DSEB65B
+
