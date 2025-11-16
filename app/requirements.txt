@@ -6,4 +6,4 @@ plotly
 lightgbm
 openpyxl
 xgboost
-sklearn
+scikit-learn
