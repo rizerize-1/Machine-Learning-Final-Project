@@ -6,3 +6,4 @@ plotly
 lightgbm
 openpyxl
 xgboost
+sklearn
