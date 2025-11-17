@@ -13,7 +13,6 @@ import io
 
 # --- FILE DOWNLOAD URL ---
 # !!! REPLACE WITH YOUR HUGGING FACE REPO URL !!!
-# Must end with "/resolve/main/"
 BASE_URL = "https://huggingface.co/ingresp/my-weather-models/resolve/main/"
 # ------------------------
 
@@ -21,27 +20,22 @@ BASE_URL = "https://huggingface.co/ingresp/my-weather-models/resolve/main/"
 
 @st.cache_data
 def download_file(file_name):
-    """Download file from Hugging Face if not exists."""
     local_path = file_name
-    
     if not os.path.exists(local_path):
         url = BASE_URL + file_name
         try:
             with st.spinner(f"Downloading {file_name}..."):
                 response = requests.get(url)
                 response.raise_for_status()
-                
                 with open(local_path, 'wb') as f:
                     f.write(response.content)
         except requests.exceptions.RequestException as e:
             st.error(f"Error downloading {file_name}: {e}")
             st.stop()
-            
     return local_path
 
 @st.cache_data
 def get_base64_of_bin_file(bin_file):
-    """Read file and base64 encode"""
     try:
         download_file(bin_file)
         with open(bin_file, 'rb') as f:
@@ -74,7 +68,6 @@ def set_bg_and_css(file_path):
         background-repeat: no-repeat;
         background-attachment: fixed;
     }}
-    
     [data-testid="stAppViewContainer"]::before {{
         content: "";
         position: absolute;
@@ -91,10 +84,6 @@ def set_bg_and_css(file_path):
     }}
     [data-testid="stSidebar"] {{
         background-color: rgba(0, 0, 0, 0.3) !important;
-    }}
-    [data-testid="stVerticalBlock"], 
-    [data-testid="stHorizontalBlock"] {{
-        background-color: transparent !important; 
     }}
     div[data-testid="stMetricValue"] {{
         font-size: 5rem !important; 
@@ -120,29 +109,7 @@ def set_bg_and_css(file_path):
         border: 1px solid rgba(255, 255, 255, 0.2);
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }}
-    [data-testid="stSidebar"] [data-testid="stDateInput"] [data-testid="stWidgetLabel"] {{
-        color: black !important;
-    }}
-    .stDateInput input, .stDateInput [data-testid="baseInput-date"], .stDateInput [data-testid="StyledDatePickerIcon"] {{
-        color: black !important;
-    }}
-    .react-datepicker-popper,
-    .react-datepicker-popper * {{
-        color: black !important;
-    }}
-    .react-datepicker-popper .react-datepicker__day--selected,
-    .react-datepicker-popper .react-datepicker__day--keyboard-selected {{
-        background-color: #ff4b4b !important;
-        color: white !important; 
-    }}
-    .react-datepicker-popper .react-datepicker__day--outside-month {{
-        color: #ccc !important; 
-    }}
-    .react-datepicker-popper .react-datepicker__day--today {{
-        border: 1px solid #ccc !important;
-        border-radius: 50%;
-        font-weight: bold;
-    }}
+    .stDateInput input {{ color: black !important; }}
     </style>
     """
     st.markdown(page_bg_img, unsafe_allow_html=True)
@@ -157,14 +124,12 @@ def load_models_and_features():
         for h in horizons:
             model_path = download_file(f'model_{h}.joblib')
             models[h] = joblib.load(model_path)
-        
         features_path = download_file('selected_features.json')
         with open(features_path, 'r') as f:
             features = json.load(f)
-            
         return models, features
     except Exception as e:
-        st.error(f"Error loading models or features: {e}")
+        st.error(f"Error loading models: {e}")
         return None, None
 
 @st.cache_data
@@ -172,22 +137,18 @@ def load_and_process_data(data_path='hcm.xlsx'):
     try:
         data_file_path = download_file(data_path)
         df_raw = pd.read_excel(data_file_path)
-        
         download_file("hcm.jpg")
         
+        # Keep actual data for comparison
         df_original = df_raw[['datetime', 'temp', 'feelslike', 'humidity']].copy() 
         df_original['datetime'] = pd.to_datetime(df_original['datetime'])
         df_original['date_col'] = df_original['datetime'].dt.date
         
         df_engineered = create_all_features(df_raw)
-        
         if 'date_col' not in df_engineered.columns:
             df_engineered['date_col'] = pd.to_datetime(df_engineered['datetime']).dt.date
         
         return df_engineered, df_original
-    except KeyError as e:
-        st.error(f"Error: Column {e} not found in Excel file.")
-        return pd.DataFrame(), pd.DataFrame()
     except Exception as e:
         st.error(f"Error processing data: {e}")
         return pd.DataFrame(), pd.DataFrame()
@@ -198,168 +159,142 @@ st.set_page_config(layout="wide", page_title="Weather Forecast")
 try:
     models, features = load_models_and_features() 
     df_engineered, df_original = load_and_process_data() 
-
     set_bg_and_css("hcm.jpg") 
     
     df_engineered = df_engineered.ffill().bfill()
 
-    if models is None or df_engineered.empty or df_original.empty:
+    if models is None or df_engineered.empty:
         st.stop()
 
     st.title("☀️ Ho Chi Minh City Weather") 
     st.markdown("---") 
 
-    # ---- Sidebar Interface ----
+    # ---- Sidebar ----
     st.sidebar.header("Controls 🗓️") 
-    st.sidebar.markdown("Select a day to see the **Temperature Forecast**.")
-
-    MAX_ROLLING_WINDOW = 56 
-    FORECAST_HORIZON = 5
-    
     first_valid_date = df_engineered.iloc[0]['date_col']
-    last_valid_date = df_engineered.iloc[-FORECAST_HORIZON - 1]['date_col']
-
-    # --- SET DEFAULT DATE TO 14/11/2025 ---
-    target_default_date = pd.Timestamp("2025-11-14").date()
+    last_valid_date = df_engineered.iloc[-5]['date_col'] # Ensure space for predictions
     
-    # Logic kiểm tra: Nếu ngày 14/11 nằm ngoài vùng dữ liệu, dùng ngày cuối cùng hợp lệ
-    # để tránh crash ứng dụng.
-    if first_valid_date <= target_default_date <= last_valid_date:
-        default_value = target_default_date
-    else:
-        default_value = last_valid_date 
-        # Hoặc first_valid_date tùy bạn, ở đây tôi chọn ngày mới nhất có thể dự báo
-    # ---------------------------------------
+    target_default = pd.Timestamp("2025-11-14").date()
+    default_val = target_default if first_valid_date <= target_default <= last_valid_date else last_valid_date
 
-    selected_date = st.sidebar.date_input(
-        "Select Day",
-        value=default_value,  # Sử dụng giá trị mặc định mới
-        min_value=first_valid_date,
-        max_value=last_valid_date
-    )
+    selected_date = st.sidebar.date_input("Select Day", value=default_val, min_value=first_valid_date, max_value=last_valid_date)
 
-    # ---- Data Retrieval and Prediction Logic ----
-    data_t = df_engineered[df_engineered['date_col'] == selected_date]
-
-    if data_t.empty:
-        st.error(f"Processed data not found for date {selected_date}.")
-        st.stop()
-
-    X_predict_base = data_t.iloc[0]
+    # ---- LOGIC DỰ BÁO MỚI (SHIFT) ----
     
-    predictions = []
-    horizons = ["t1", "t2", "t3", "t4", "t5"] 
+    # 1. DỰ BÁO CHO NGÀY T (Dùng dữ liệu T-1)
+    pred_day_t = None
+    date_prev = selected_date - timedelta(days=1)
+    data_prev = df_engineered[df_engineered['date_col'] == date_prev]
+    
+    if not data_prev.empty:
+        # Dùng model T1 cho dữ liệu T-1 để ra T
+        X_prev = data_prev.iloc[0].to_frame().T
+        valid_cols_t1 = [c for c in features['t1'] if c in X_prev.columns]
+        X_prev = X_prev[valid_cols_t1].astype(float)
+        pred_day_t = models['t1'].predict(X_prev)[0]
 
-    for i, h in enumerate(horizons, 1):
-            model = models[h]
-            feature_list = features[h] 
-            valid_features = [f for f in feature_list if f in X_predict_base.index]
-            X_pred_h = X_predict_base[valid_features].to_frame().T
-            X_pred_h = X_pred_h.astype(float)
-            prediction_temp = model.predict(X_pred_h)[0]
-            forecast_date = selected_date + timedelta(days=i)
-            predictions.append({
-                "Date": forecast_date,
-                "Temperature": prediction_temp
+    # 2. DỰ BÁO TƯƠNG LAI (T+1 -> T+4) (Dùng dữ liệu T)
+    future_predictions = []
+    data_curr = df_engineered[df_engineered['date_col'] == selected_date]
+    
+    if not data_curr.empty:
+        X_curr_base = data_curr.iloc[0]
+        
+        # Dự báo 4 ngày tới (T+1, T+2, T+3, T+4)
+        # Dùng lần lượt model t1, t2, t3, t4
+        for i, h in enumerate(['t1', 't2', 't3', 't4'], start=1):
+            valid_cols = [c for c in features[h] if c in X_curr_base.index]
+            X_in = X_curr_base[valid_cols].to_frame().T.astype(float)
+            
+            pred_val = models[h].predict(X_in)[0]
+            future_date = selected_date + timedelta(days=i)
+            
+            future_predictions.append({
+                "Date": future_date,
+                "Temperature": pred_val
             })
 
-    # ---- DISPLAY RESULTS (ENGLISH) ----
+    # ---- HIỂN THỊ KẾT QUẢ ----
     
     st.subheader(f"**{selected_date.strftime('%A, %B %d, %Y')}**") 
-    
-    df_forecast = pd.DataFrame(predictions)
-    df_forecast['Date'] = pd.to_datetime(df_forecast['Date'])
 
-    # --- 1. Metric T (Big) ---
-    actual_data_t = df_original[df_original['date_col'] == selected_date]
+    # --- 1. Metric T (DỰ BÁO TỪ QUÁ KHỨ) ---
+    # Lấy thêm dữ liệu thực tế để so sánh (nếu muốn)
+    actual_row = df_original[df_original['date_col'] == selected_date]
+    actual_temp = actual_row['temp'].values[0] if not actual_row.empty else "N/A"
     
-    if not actual_data_t.empty:
-        actual_temp_t = actual_data_t['temp'].values[0]
-        st.metric(
-            f"🌡️ Temperature (Day T: {selected_date.strftime('%d-%m')})", 
-            f"{actual_temp_t:.1f} °C",
-            help="This is the actual recorded temperature for the selected Day T."
+    col_main, col_sub = st.columns([2, 1])
+    
+    with col_main:
+        if pred_day_t is not None:
+            st.metric(
+                f"🌡️ Predicted Temp (Day T)", 
+                f"{pred_day_t:.1f} °C",
+                delta=f"{pred_day_t - actual_temp:.1f} °C vs Actual" if isinstance(actual_temp, (int, float)) else None,
+                delta_color="off", # Màu xám trung tính
+                help=f"This value is PREDICTED by the model using data from yesterday ({date_prev}). Actual was {actual_temp}"
+            )
+        else:
+            st.metric("Predicted Temp (Day T)", "No Data (T-1 missing)")
+
+    with col_sub:
+        # Hiển thị thông tin phụ (Thực tế)
+        if not actual_row.empty:
+            st.markdown(f"**Actual:** {actual_temp:.1f} °C")
+            st.markdown(f"**Feels:** {actual_row['feelslike'].values[0]:.1f} °C")
+            st.markdown(f"**Humid:** {actual_row['humidity'].values[0]:.0f}%")
+
+    st.markdown("---") 
+
+    # --- 2. 4-Day Forecast Metrics (T+1 -> T+4) ---
+    st.subheader("Forecast (Next 4 Days)")
+    if len(future_predictions) >= 4:
+        cols = st.columns(4)
+        for idx, col in enumerate(cols):
+            item = future_predictions[idx]
+            with col:
+                st.metric(
+                    f"{item['Date'].strftime('%a, %d-%m')}",
+                    f"{item['Temperature']:.1f} °C"
+                )
+
+    st.markdown("---") 
+
+    # --- 3. Chart (Kết hợp T dự báo và T+1..4) ---
+    # Tạo dữ liệu cho biểu đồ: Gồm Day T (dự báo) + 4 ngày tới
+    chart_data = []
+    if pred_day_t is not None:
+        chart_data.append({"Date": pd.to_datetime(selected_date), "Temperature": pred_day_t, "Type": "Predicted (T)"})
+    
+    for item in future_predictions:
+        chart_data.append({"Date": pd.to_datetime(item['Date']), "Temperature": item['Temperature'], "Type": "Forecast"})
+        
+    df_chart = pd.DataFrame(chart_data)
+
+    if not df_chart.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df_chart['Date'], 
+            y=df_chart['Temperature'],
+            mode='lines+markers+text',
+            text=df_chart['Temperature'].round(1),
+            textposition="top center",
+            line=dict(color='cyan', width=3),
+            marker=dict(color='cyan', size=8),
+            name="Prediction"
+        ))
+        fig.update_layout(
+            title="Temperature Prediction Trend (T to T+4)",
+            xaxis_title="Date",
+            yaxis_title="Temperature (°C)",
+            plot_bgcolor='rgba(0,0,0,0.2)', 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            font=dict(color='white'),
+            xaxis=dict(gridcolor='rgba(255, 255, 255, 0.2)'),
+            yaxis=dict(gridcolor='rgba(255, 255, 255, 0.2)')
         )
-        
-        actual_feelslike_t = actual_data_t['feelslike'].values[0]
-        actual_humidity_t = actual_data_t['humidity'].values[0]
-        
-        col_feels, col_humid = st.columns(2)
-        with col_feels:
-            st.metric(
-                f"🥵 Feels like", 
-                f"{actual_feelslike_t:.1f} °C",
-            )
-        with col_humid:
-            st.metric(
-                f"💧 Humidity",
-                f"{actual_humidity_t:.0f} %"
-            )
-    else:
-        st.metric(f"🌡️ Temperature (Day T: {selected_date.strftime('%d-%m')})", "N/A")
-    
-    st.markdown("---") 
+        st.plotly_chart(fig, use_container_width=True)
 
-    # --- 2. 4-Day Forecast Metrics ---
-    st.subheader("4-Day Forecast")
-    if len(df_forecast) >= 4:
-        forecast_t1 = df_forecast.iloc[0]
-        forecast_t2 = df_forecast.iloc[1]
-        forecast_t3 = df_forecast.iloc[2]
-        forecast_t4 = df_forecast.iloc[3]
-
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric(
-                f"{forecast_t1['Date'].strftime('%A, %d-%m')}",
-                f"{forecast_t1['Temperature']:.1f} °C"
-            )
-        with col2:
-            st.metric(
-                f"{forecast_t2['Date'].strftime('%A, %d-%m')}",
-                f"{forecast_t2['Temperature']:.1f} °C"
-            )
-        with col3:
-            st.metric(
-                f"{forecast_t3['Date'].strftime('%A, %d-%m')}",
-                f"{forecast_t3['Temperature']:.1f} °C"
-            )
-        with col4:
-            st.metric(
-                f"{forecast_t4['Date'].strftime('%A, %d-%m')}",
-                f"{forecast_t4['Temperature']:.1f} °C"
-            )
-
-    st.markdown("---") 
-
-    # --- 3. Forecast Chart ---
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df_forecast['Date'], 
-        y=df_forecast['Temperature'],
-        mode='lines+markers+text',
-        text=df_forecast['Temperature'].round(1),
-        textposition="top center",
-        line=dict(color='cyan', width=3),
-        marker=dict(color='cyan', size=8),
-        name="Forecast"
-    ))
-    fig.update_layout(
-        title="Temperature Trend (Next 5 Days)",
-        xaxis_title="Date",
-        yaxis_title="Temperature (°C)",
-        plot_bgcolor='rgba(0,0,0,0.2)', 
-        paper_bgcolor='rgba(0,0,0,0)', 
-        font=dict(color='white'),
-        xaxis=dict(gridcolor='rgba(255, 255, 255, 0.2)'),
-        yaxis=dict(gridcolor='rgba(255, 255, 255, 0.2)')
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-except FileNotFoundError as e:
-    st.error(f"Error: File not found: {e.filename if hasattr(e, 'filename') else e}")
 except Exception as e:
     st.error(f"An unexpected error occurred:")
     st.exception(e)
