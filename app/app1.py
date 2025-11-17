@@ -12,7 +12,8 @@ import requests
 import io
 
 # --- FILE DOWNLOAD URL ---
-# !!! REPLACE WITH YOUR HUGGING FACE REPO URL !!!
+# !!! THAY THẾ BẰNG LINK REPO HUGGING FACE CỦA BẠN !!!
+# Link phải có đuôi "/resolve/main/"
 BASE_URL = "https://huggingface.co/ingresp/my-weather-models/resolve/main/"
 # ------------------------
 
@@ -109,6 +110,13 @@ def set_bg_and_css(file_path):
         border: 1px solid rgba(255, 255, 255, 0.2);
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
     }}
+    /* Hiệu ứng Hover cho đẹp */
+    [data-testid="stMetric"]:hover {{
+        background-color: rgba(255, 255, 255, 0.25) !important;
+        transform: scale(1.02);
+        transition: transform 0.2s ease-out, background-color 0.2s ease-out;
+        z-index: 10;
+    }}
     .stDateInput input {{ color: black !important; }}
     </style>
     """
@@ -139,8 +147,8 @@ def load_and_process_data(data_path='hcm.xlsx'):
         df_raw = pd.read_excel(data_file_path)
         download_file("hcm.jpg")
         
-        # Keep actual data for comparison
-        df_original = df_raw[['datetime', 'temp', 'feelslike', 'humidity']].copy() 
+        # Chỉ giữ lại datetime để làm index, không cần load temp/feelslike nữa
+        df_original = df_raw[['datetime']].copy() 
         df_original['datetime'] = pd.to_datetime(df_original['datetime'])
         df_original['date_col'] = df_original['datetime'].dt.date
         
@@ -172,14 +180,14 @@ try:
     # ---- Sidebar ----
     st.sidebar.header("Controls 🗓️") 
     first_valid_date = df_engineered.iloc[0]['date_col']
-    last_valid_date = df_engineered.iloc[-5]['date_col'] # Ensure space for predictions
+    last_valid_date = df_engineered.iloc[-5]['date_col'] 
     
     target_default = pd.Timestamp("2025-11-14").date()
     default_val = target_default if first_valid_date <= target_default <= last_valid_date else last_valid_date
 
     selected_date = st.sidebar.date_input("Select Day", value=default_val, min_value=first_valid_date, max_value=last_valid_date)
 
-    # ---- LOGIC DỰ BÁO MỚI (SHIFT) ----
+    # ---- LOGIC DỰ BÁO (PREDICTION LOGIC) ----
     
     # 1. DỰ BÁO CHO NGÀY T (Dùng dữ liệu T-1)
     pred_day_t = None
@@ -187,7 +195,6 @@ try:
     data_prev = df_engineered[df_engineered['date_col'] == date_prev]
     
     if not data_prev.empty:
-        # Dùng model T1 cho dữ liệu T-1 để ra T
         X_prev = data_prev.iloc[0].to_frame().T
         valid_cols_t1 = [c for c in features['t1'] if c in X_prev.columns]
         X_prev = X_prev[valid_cols_t1].astype(float)
@@ -200,8 +207,6 @@ try:
     if not data_curr.empty:
         X_curr_base = data_curr.iloc[0]
         
-        # Dự báo 4 ngày tới (T+1, T+2, T+3, T+4)
-        # Dùng lần lượt model t1, t2, t3, t4
         for i, h in enumerate(['t1', 't2', 't3', 't4'], start=1):
             valid_cols = [c for c in features[h] if c in X_curr_base.index]
             X_in = X_curr_base[valid_cols].to_frame().T.astype(float)
@@ -214,35 +219,20 @@ try:
                 "Temperature": pred_val
             })
 
-    # ---- HIỂN THỊ KẾT QUẢ ----
+    # ---- DISPLAY RESULTS ----
     
     st.subheader(f"**{selected_date.strftime('%A, %B %d, %Y')}**") 
 
-    # --- 1. Metric T (DỰ BÁO TỪ QUÁ KHỨ) ---
-    # Lấy thêm dữ liệu thực tế để so sánh (nếu muốn)
-    actual_row = df_original[df_original['date_col'] == selected_date]
-    actual_temp = actual_row['temp'].values[0] if not actual_row.empty else "N/A"
+    # --- 1. Metric T (CHỈ HIỆN DỰ BÁO) ---
     
-    col_main, col_sub = st.columns([2, 1])
-    
-    with col_main:
-        if pred_day_t is not None:
-            st.metric(
-                f"🌡️ Predicted Temp (Day T)", 
-                f"{pred_day_t:.1f} °C",
-                delta=f"{pred_day_t - actual_temp:.1f} °C vs Actual" if isinstance(actual_temp, (int, float)) else None,
-                delta_color="off", # Màu xám trung tính
-                help=f"This value is PREDICTED by the model using data from yesterday ({date_prev}). Actual was {actual_temp}"
-            )
-        else:
-            st.metric("Predicted Temp (Day T)", "No Data (T-1 missing)")
-
-    with col_sub:
-        # Hiển thị thông tin phụ (Thực tế)
-        if not actual_row.empty:
-            st.markdown(f"**Actual:** {actual_temp:.1f} °C")
-            st.markdown(f"**Feels:** {actual_row['feelslike'].values[0]:.1f} °C")
-            st.markdown(f"**Humid:** {actual_row['humidity'].values[0]:.0f}%")
+    if pred_day_t is not None:
+        st.metric(
+            f"🌡️ Predicted Temp (Day T)", 
+            f"{pred_day_t:.1f} °C",
+            help=f"This value is PREDICTED by the model using data from yesterday ({date_prev})."
+        )
+    else:
+        st.metric("Predicted Temp (Day T)", "No Data (T-1 missing)")
 
     st.markdown("---") 
 
@@ -260,8 +250,7 @@ try:
 
     st.markdown("---") 
 
-    # --- 3. Chart (Kết hợp T dự báo và T+1..4) ---
-    # Tạo dữ liệu cho biểu đồ: Gồm Day T (dự báo) + 4 ngày tới
+    # --- 3. Chart (T và T+1..4) ---
     chart_data = []
     if pred_day_t is not None:
         chart_data.append({"Date": pd.to_datetime(selected_date), "Temperature": pred_day_t, "Type": "Predicted (T)"})
