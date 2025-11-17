@@ -11,7 +11,8 @@ import os
 import requests
 import io
 
-
+# --- FILE DOWNLOAD URL ---
+# !!! REPLACE WITH YOUR HUGGING FACE REPO URL !!!
 # Must end with "/resolve/main/"
 BASE_URL = "https://huggingface.co/ingresp/my-weather-models/resolve/main/"
 # ------------------------
@@ -218,9 +219,21 @@ try:
     first_valid_date = df_engineered.iloc[0]['date_col']
     last_valid_date = df_engineered.iloc[-FORECAST_HORIZON - 1]['date_col']
 
+    # --- SET DEFAULT DATE TO 14/11/2025 ---
+    target_default_date = pd.Timestamp("2025-11-14").date()
+    
+    # Logic kiểm tra: Nếu ngày 14/11 nằm ngoài vùng dữ liệu, dùng ngày cuối cùng hợp lệ
+    # để tránh crash ứng dụng.
+    if first_valid_date <= target_default_date <= last_valid_date:
+        default_value = target_default_date
+    else:
+        default_value = last_valid_date 
+        # Hoặc first_valid_date tùy bạn, ở đây tôi chọn ngày mới nhất có thể dự báo
+    # ---------------------------------------
+
     selected_date = st.sidebar.date_input(
         "Select Day",
-        value=first_valid_date,
+        value=default_value,  # Sử dụng giá trị mặc định mới
         min_value=first_valid_date,
         max_value=last_valid_date
     )
